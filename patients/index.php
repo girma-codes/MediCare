@@ -3,9 +3,96 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../config/database.php';
 
-requireRole(['admin']);
+requireRole(['admin', 'receptionist']);
 
-// Fetch all registered patients
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+function e($value) {
+    return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
+$success = '';
+$error = '';
+
+// Activate / Deactivate patient
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    $token = $_POST['csrf_token'] ?? '';
+    $patientId = filter_input(INPUT_POST, 'patient_id', FILTER_VALIDATE_INT);
+    $newStatus = $_POST['new_status'] ?? '';
+
+    if (!hash_equals($_SESSION['csrf_token'], $token)) {
+        $error = 'Security verification failed. Please refresh the page.';
+    } elseif (!$patientId || !in_array($newStatus, ['active', 'inactive'], true)) {
+        $error = 'Invalid patient request.';
+    } else {
+        try {
+            $check = $pdo->prepare("
+                SELECT p.id, p.user_id
+                FROM patients p
+                INNER JOIN users u ON p.user_id = u.id
+                WHERE p.id = ?
+                LIMIT 1
+            ");
+            $check->execute([$patientId]);
+            $targetPatient = $check->fetch(PDO::FETCH_ASSOC);
+
+            if (!$targetPatient) {
+                $error = 'Patient not found.';
+            } else {
+                $update = $pdo->prepare("
+                    UPDATE users
+                    SET status = ?
+                    WHERE id = ?
+                ");
+
+                $update->execute([
+                    $newStatus,
+                    $targetPatient['user_id']
+                ]);
+
+                $success = $newStatus === 'active'
+                    ? 'Patient account activated successfully.'
+                    : 'Patient account deactivated successfully.';
+            }
+
+        } catch (PDOException $ex) {
+            $error = 'Unable to update patient status. Please try again.';
+        }
+    }
+}
+
+// Search and filter values
+$search = trim($_GET['search'] ?? '');
+$statusFilter = $_GET['status'] ?? '';
+
+if (!in_array($statusFilter, ['', 'active', 'inactive'], true)) {
+    $statusFilter = '';
+}
+
+// Total statistics - independent of search filters
+$statsStmt = $pdo->query("
+    SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN u.status = 'active' THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN u.status = 'inactive' OR u.status IS NULL THEN 1 ELSE 0 END) AS inactive
+    FROM patients p
+    LEFT JOIN users u ON p.user_id = u.id
+");
+
+$stats = $statsStmt->fetch(PDO::FETCH_ASSOC);
+
+$totalPatients = (int)($stats['total'] ?? 0);
+$activePatients = (int)($stats['active'] ?? 0);
+$inactivePatients = (int)($stats['inactive'] ?? 0);
+
+// Build filtered patient query
 $sql = "
     SELECT
         p.id,
@@ -21,13 +108,43 @@ $sql = "
         u.status
     FROM patients p
     LEFT JOIN users u ON p.user_id = u.id
-    ORDER BY p.id DESC
+    WHERE 1 = 1
 ";
 
-$stmt = $pdo->query($sql);
+$params = [];
+
+if ($search !== '') {
+    $sql .= "
+        AND (
+            u.full_name LIKE ?
+            OR p.patient_number LIKE ?
+            OR p.phone LIKE ?
+        )
+    ";
+
+    $searchTerm = '%' . $search . '%';
+
+    $params[] = $searchTerm;
+    $params[] = $searchTerm;
+    $params[] = $searchTerm;
+}
+
+if ($statusFilter !== '') {
+    $sql .= " AND u.status = ?";
+    $params[] = $statusFilter;
+}
+
+$sql .= " ORDER BY p.id DESC";
+
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
 $patients = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$totalPatients = count($patients);
+$filteredCount = count($patients);
+
+$dashboardUrl = $_SESSION['role'] === 'receptionist'
+    ? '../receptionist/dashboard.php'
+    : '../admin/dashboard.php';
 ?>
 
 <!DOCTYPE html>
@@ -52,15 +169,11 @@ body {
     color: #1e293b;
 }
 
-/* Main Layout */
-
 .main-container {
     max-width: 1450px;
     margin: auto;
     padding: 35px;
 }
-
-/* Header */
 
 .page-header {
     display: flex;
@@ -81,8 +194,6 @@ body {
     font-size: 14px;
 }
 
-/* Buttons */
-
 .header-actions {
     display: flex;
     gap: 12px;
@@ -99,6 +210,8 @@ body {
     font-size: 14px;
     font-weight: 600;
     transition: .2s;
+    border: none;
+    cursor: pointer;
 }
 
 .btn-primary {
@@ -119,8 +232,6 @@ body {
 .btn-secondary:hover {
     background: #f8fafc;
 }
-
-/* Statistics */
 
 .stats-grid {
     display: grid;
@@ -145,10 +256,11 @@ body {
 .stat-card h2 {
     margin-top: 12px;
     font-size: 30px;
-    color: #2563eb;
 }
 
-/* Patient Table */
+.blue { color: #2563eb; }
+.green { color: #16a34a; }
+.red { color: #dc2626; }
 
 .table-card {
     background: white;
@@ -177,6 +289,50 @@ body {
     margin-top: 5px;
 }
 
+/* Search and Filter */
+.filter-form {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) 200px auto auto;
+    gap: 12px;
+    margin-bottom: 22px;
+    align-items: center;
+}
+
+.filter-form input,
+.filter-form select {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 14px;
+    background: white;
+    outline: none;
+}
+
+.filter-form input:focus,
+.filter-form select:focus {
+    border-color: #2563eb;
+}
+
+.clear-btn {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    padding: 12px 16px;
+    background: #f1f5f9;
+    color: #334155;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.results-info {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 15px;
+}
+
 .table-wrapper {
     width: 100%;
     overflow-x: auto;
@@ -185,7 +341,7 @@ body {
 table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 850px;
+    min-width: 1050px;
 }
 
 thead {
@@ -233,6 +389,24 @@ tbody tr:hover {
     font-size: 12px;
 }
 
+.status {
+    display: inline-block;
+    padding: 6px 11px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.status-active {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.status-inactive {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
 .view-btn {
     display: inline-block;
     background: #eff6ff;
@@ -244,11 +418,35 @@ tbody tr:hover {
     font-size: 12px;
 }
 
-.view-btn:hover {
-    background: #dbeafe;
+.action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
 }
 
-/* Empty State */
+.status-btn {
+    padding: 8px 11px;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.deactivate-btn {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.activate-btn {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.status-btn:hover {
+    opacity: .8;
+}
 
 .empty-state {
     text-align: center;
@@ -261,7 +459,22 @@ tbody tr:hover {
     margin-bottom: 8px;
 }
 
-/* Footer */
+.alert {
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 14px;
+}
+
+.alert-success {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+}
 
 .page-footer {
     margin-top: 25px;
@@ -270,10 +483,13 @@ tbody tr:hover {
     text-align: center;
 }
 
-/* Responsive */
+@media(max-width: 800px) {
+    .filter-form {
+        grid-template-columns: 1fr 1fr;
+    }
+}
 
 @media(max-width: 650px) {
-
     .main-container {
         padding: 18px;
     }
@@ -297,6 +513,10 @@ tbody tr:hover {
     .table-card {
         padding: 16px;
     }
+
+    .filter-form {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 
@@ -306,23 +526,16 @@ tbody tr:hover {
 
 <div class="main-container">
 
-    <!-- Page Header -->
-
     <header class="page-header">
 
         <div class="page-title">
-
             <h1>Patient Management</h1>
-
-            <p>
-                Manage and view registered hospital patients.
-            </p>
-
+            <p>Manage and view registered hospital patients.</p>
         </div>
 
         <div class="header-actions">
 
-            <a href="../admin/dashboard.php" class="btn btn-secondary">
+            <a href="<?= e($dashboardUrl) ?>" class="btn btn-secondary">
                 ← Dashboard
             </a>
 
@@ -334,135 +547,165 @@ tbody tr:hover {
 
     </header>
 
+    <?php if ($success): ?>
+        <div class="alert alert-success">
+            ✓ <?= e($success) ?>
+        </div>
+    <?php endif; ?>
 
-    <!-- Statistics -->
+    <?php if ($error): ?>
+        <div class="alert alert-error">
+            ⚠ <?= e($error) ?>
+        </div>
+    <?php endif; ?>
 
     <section class="stats-grid">
 
         <div class="stat-card">
-
             <span>Total Registered Patients</span>
+            <h2 class="blue"><?= number_format($totalPatients) ?></h2>
+        </div>
 
-            <h2>
-                <?= number_format($totalPatients) ?>
-            </h2>
+        <div class="stat-card">
+            <span>Active Patients</span>
+            <h2 class="green"><?= number_format($activePatients) ?></h2>
+        </div>
 
+        <div class="stat-card">
+            <span>Inactive Patients</span>
+            <h2 class="red"><?= number_format($inactivePatients) ?></h2>
         </div>
 
     </section>
 
-
-    <!-- Patient Table -->
-
     <section class="table-card">
 
         <div class="table-header">
-
             <div>
-
                 <h2>Patient Records</h2>
-
-                <p>
-                    List of all registered hospital patients.
-                </p>
-
+                <p>Search and manage registered hospital patients.</p>
             </div>
-
         </div>
 
+        <!-- Search and Filter Form -->
+        <form method="GET" action="index.php" class="filter-form">
+
+            <input
+                type="search"
+                name="search"
+                placeholder="Search name, patient ID or phone..."
+                value="<?= e($search) ?>"
+            >
+
+            <select name="status">
+                <option value="">All Patient Status</option>
+                <option value="active" <?= $statusFilter === 'active' ? 'selected' : '' ?>>
+                    Active Patients
+                </option>
+                <option value="inactive" <?= $statusFilter === 'inactive' ? 'selected' : '' ?>>
+                    Inactive Patients
+                </option>
+            </select>
+
+            <button type="submit" class="btn btn-primary">
+                Search
+            </button>
+
+            <a href="index.php" class="clear-btn">
+                Clear Filters
+            </a>
+
+        </form>
+
+        <div class="results-info">
+            Showing <strong><?= number_format($filteredCount) ?></strong>
+            matching patient(s).
+        </div>
 
         <div class="table-wrapper">
 
             <table>
 
                 <thead>
-
                     <tr>
-
                         <th>Patient ID</th>
-
                         <th>Full Name</th>
-
                         <th>Email</th>
-
                         <th>Gender</th>
-
                         <th>Phone</th>
-
                         <th>Date of Birth</th>
-
-                        <th>Action</th>
-
+                        <th>Status</th>
+                        <th>Actions</th>
                     </tr>
-
                 </thead>
-
 
                 <tbody>
 
-                <?php if ($totalPatients > 0): ?>
+                <?php if ($filteredCount > 0): ?>
 
                     <?php foreach ($patients as $patient): ?>
+
+                        <?php
+                        $isActive = ($patient['status'] ?? '') === 'active';
+                        ?>
 
                         <tr>
 
                             <td class="patient-number">
-
-                                <?= htmlspecialchars($patient['patient_number'] ?? 'N/A') ?>
-
+                                <?= e($patient['patient_number'] ?? 'N/A') ?>
                             </td>
-
 
                             <td class="patient-name">
-
-                                <?= htmlspecialchars($patient['full_name'] ?? 'N/A') ?>
-
+                                <?= e($patient['full_name'] ?? 'N/A') ?>
                             </td>
 
+                            <td><?= e($patient['email'] ?? 'N/A') ?></td>
 
                             <td>
-
-                                <?= htmlspecialchars($patient['email'] ?? 'N/A') ?>
-
-                            </td>
-
-
-                            <td>
-
                                 <span class="gender">
-
-                                    <?= htmlspecialchars(ucfirst($patient['gender'] ?? 'N/A')) ?>
-
+                                    <?= e(ucfirst($patient['gender'] ?? 'N/A')) ?>
                                 </span>
-
                             </td>
 
+                            <td><?= e($patient['phone'] ?? 'N/A') ?></td>
+
+                            <td><?= e($patient['date_of_birth'] ?? 'N/A') ?></td>
 
                             <td>
-
-                                <?= htmlspecialchars($patient['phone'] ?? 'N/A') ?>
-
+                                <span class="status <?= $isActive ? 'status-active' : 'status-inactive' ?>">
+                                    <?= $isActive ? 'Active' : 'Inactive' ?>
+                                </span>
                             </td>
 
-
                             <td>
+                                <div class="action-buttons">
 
-                                <?= htmlspecialchars($patient['date_of_birth'] ?? 'N/A') ?>
+                                    <a href="view.php?id=<?= (int)$patient['id'] ?>"
+                                       class="view-btn">
+                                        View
+                                    </a>
 
-                            </td>
+                                    <form method="POST"
+                                          action="index.php"
+                                          onsubmit="return confirm('Are you sure you want to <?= $isActive ? 'deactivate' : 'activate' ?> this patient account?');">
 
+                                        <input type="hidden" name="csrf_token"
+                                               value="<?= e($_SESSION['csrf_token']) ?>">
 
-                            <td>
+                                        <input type="hidden" name="patient_id"
+                                               value="<?= (int)$patient['id'] ?>">
 
-                                <a
-                                    href="view.php?id=<?= (int)$patient['id'] ?>"
-                                    class="view-btn"
-                                >
+                                        <input type="hidden" name="new_status"
+                                               value="<?= $isActive ? 'inactive' : 'active' ?>">
 
-                                    View Details
+                                        <button type="submit"
+                                                class="status-btn <?= $isActive ? 'deactivate-btn' : 'activate-btn' ?>">
+                                            <?= $isActive ? 'Deactivate' : 'Activate' ?>
+                                        </button>
 
-                                </a>
+                                    </form>
 
+                                </div>
                             </td>
 
                         </tr>
@@ -472,27 +715,16 @@ tbody tr:hover {
                 <?php else: ?>
 
                     <tr>
-
-                        <td colspan="7">
-
+                        <td colspan="8">
                             <div class="empty-state">
-
                                 <h3>No Patients Found</h3>
-
-                                <p>
-                                    There are no registered patients yet.
-                                </p>
-
+                                <p>No patients match your search or filter.</p>
                                 <br>
-
-                                <a href="register.php" class="btn btn-primary">
-                                    Register First Patient
+                                <a href="index.php" class="btn btn-secondary">
+                                    Clear Filters
                                 </a>
-
                             </div>
-
                         </td>
-
                     </tr>
 
                 <?php endif; ?>
@@ -505,15 +737,11 @@ tbody tr:hover {
 
     </section>
 
-
     <footer class="page-footer">
-
         MediCare Hospital Management System
-
     </footer>
 
 </div>
 
 </body>
-
 </html>

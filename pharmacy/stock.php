@@ -11,11 +11,7 @@ if (empty($_SESSION['csrf_token'])) {
 
 if (!function_exists('e')) {
     function e($value): string {
-        return htmlspecialchars(
-            (string)$value,
-            ENT_QUOTES,
-            'UTF-8'
-        );
+        return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
     }
 }
 
@@ -28,51 +24,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (
         empty($_SESSION['csrf_token']) ||
         empty($_POST['csrf_token']) ||
-        !hash_equals(
-            $_SESSION['csrf_token'],
-            $_POST['csrf_token']
-        )
+        !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])
     ) {
         $error = 'Invalid security token. Please refresh the page.';
 
     } else {
 
-        $medicineId = filter_input(
-            INPUT_POST,
-            'medicine_id',
-            FILTER_VALIDATE_INT
-        );
-
+        $medicineId = filter_input(INPUT_POST, 'medicine_id', FILTER_VALIDATE_INT);
         $movementType = $_POST['movement_type'] ?? '';
-
-        $quantity = filter_input(
-            INPUT_POST,
-            'quantity',
-            FILTER_VALIDATE_INT
-        );
-
+        $quantity = filter_input(INPUT_POST, 'quantity', FILTER_VALIDATE_INT);
         $notes = trim($_POST['notes'] ?? '');
 
         if (!$medicineId || $medicineId < 1) {
-
             $error = 'Please select a valid medicine.';
 
         } elseif (!in_array($movementType, ['in', 'out'], true)) {
-
             $error = 'Please select a valid stock movement type.';
 
         } elseif ($quantity === false || $quantity === null || $quantity < 1) {
-
             $error = 'Quantity must be at least 1.';
 
         } elseif (strlen($notes) > 255) {
-
             $error = 'Notes cannot exceed 255 characters.';
 
         } else {
 
             try {
-
                 $pdo->beginTransaction();
 
                 // Lock medicine row during stock update
@@ -83,29 +60,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     FOR UPDATE
                 ");
 
-                $stmt->execute([
-                    ':id' => $medicineId
-                ]);
-
+                $stmt->execute([':id' => $medicineId]);
                 $medicine = $stmt->fetch();
 
                 if (!$medicine) {
-
-                    throw new RuntimeException(
-                        'Selected medicine was not found.'
-                    );
-
+                    throw new RuntimeException('Selected medicine was not found.');
                 }
 
                 $previousQuantity = (int)$medicine['quantity'];
 
-                // Calculate new quantity
                 if ($movementType === 'in') {
 
                     if ($previousQuantity > PHP_INT_MAX - $quantity) {
-                        throw new RuntimeException(
-                            'Quantity is too large.'
-                        );
+                        throw new RuntimeException('Quantity is too large.');
                     }
 
                     $newQuantity = $previousQuantity + $quantity;
@@ -114,8 +81,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     if ($quantity > $previousQuantity) {
                         throw new RuntimeException(
-                            'Insufficient stock. Current quantity is '
-                            . $previousQuantity . '.'
+                            'Insufficient stock. Current quantity is ' .
+                            $previousQuantity . '.'
                         );
                     }
 
@@ -135,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
 
                 // Save stock movement history
-                $history = $pdo->prepare("
+                $historyInsert = $pdo->prepare("
                     INSERT INTO stock_movements (
                         medicine_id,
                         movement_type,
@@ -155,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     )
                 ");
 
-                $history->execute([
+                $historyInsert->execute([
                     ':medicine_id' => $medicineId,
                     ':movement_type' => $movementType,
                     ':quantity' => $quantity,
@@ -168,24 +135,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
 
                 $_SESSION['stock_success'] =
-                    'Stock successfully updated for '
-                    . $medicine['medicine_name']
-                    . '. New quantity: '
-                    . $newQuantity;
+                    'Stock successfully updated for ' .
+                    $medicine['medicine_name'] .
+                    '. New quantity: ' . $newQuantity;
 
                 header("Location: stock.php");
                 exit;
 
-            } catch (Throwable $e) {
+            } catch (Throwable $exception) {
 
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
 
-                if ($e instanceof RuntimeException) {
-                    $error = $e->getMessage();
+                if ($exception instanceof RuntimeException) {
+                    $error = $exception->getMessage();
                 } else {
-                    error_log($e->getMessage());
+                    error_log($exception->getMessage());
                     $error = 'Unable to update stock. Please try again.';
                 }
             }
@@ -247,10 +213,8 @@ $historyStmt = $pdo->query("
         m.medicine_name,
         u.full_name AS staff_name
     FROM stock_movements sm
-    INNER JOIN medicines m
-        ON sm.medicine_id = m.id
-    INNER JOIN users u
-        ON sm.created_by = u.id
+    INNER JOIN medicines m ON sm.medicine_id = m.id
+    INNER JOIN users u ON sm.created_by = u.id
     ORDER BY sm.created_at DESC, sm.id DESC
     LIMIT 100
 ");
@@ -262,11 +226,8 @@ $history = $historyStmt->fetchAll();
 <html lang="en">
 
 <head>
-
     <meta charset="UTF-8">
-
-    <meta name="viewport"
-          content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <title>Stock Management | MediCare HMS</title>
 
@@ -274,7 +235,6 @@ $history = $historyStmt->fetchAll();
           href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 
     <style>
-
         * {
             margin: 0;
             padding: 0;
@@ -287,12 +247,104 @@ $history = $historyStmt->fetchAll();
             color: #263445;
         }
 
+        /* Main Layout */
+        .app-layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 250px;
+            min-width: 250px;
+            background: #102a43;
+            color: white;
+            padding: 25px 15px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            overflow-y: auto;
+            z-index: 1000;
+        }
+
+        .sidebar-brand {
+            font-size: 21px;
+            font-weight: bold;
+            padding: 0 12px 30px;
+            letter-spacing: .3px;
+        }
+
+        .sidebar-brand i {
+            color: #60a5fa;
+            margin-right: 8px;
+        }
+
+        .sidebar-menu {
+            list-style: none;
+        }
+
+        .sidebar-menu li {
+            margin-bottom: 7px;
+        }
+
+        .sidebar-menu a {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 13px 14px;
+            color: #d5e1ee;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: .2s;
+        }
+
+        .sidebar-menu a:hover,
+        .sidebar-menu a.active {
+            background: #2563eb;
+            color: white;
+        }
+
+        .sidebar-menu i {
+            width: 20px;
+            text-align: center;
+        }
+
+        /* Main Area */
+        .main-area {
+            flex: 1;
+            margin-left: 250px;
+            min-width: 0;
+        }
+
+        .topbar {
+            height: 70px;
+            background: white;
+            border-bottom: 1px solid #edf0f5;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 30px;
+        }
+
+        .topbar strong {
+            color: #102a43;
+            font-size: 15px;
+        }
+
+        .topbar span {
+            color: #718096;
+            font-size: 13px;
+        }
+
         .container {
             max-width: 1450px;
-            margin: 35px auto;
+            margin: 30px auto;
             padding: 0 25px;
         }
 
+        /* Page Header */
         .header {
             display: flex;
             justify-content: space-between;
@@ -322,6 +374,11 @@ $history = $historyStmt->fetchAll();
             font-size: 13px;
         }
 
+        .back-btn:hover {
+            background: #dce7f5;
+        }
+
+        /* Statistics */
         .stats {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
@@ -359,6 +416,7 @@ $history = $historyStmt->fetchAll();
             font-size: 13px;
         }
 
+        /* Alerts */
         .alert {
             padding: 14px 17px;
             border-radius: 8px;
@@ -378,6 +436,7 @@ $history = $historyStmt->fetchAll();
             border: 1px solid #f5c2bd;
         }
 
+        /* Content Cards */
         .content {
             background: white;
             padding: 25px;
@@ -392,6 +451,7 @@ $history = $historyStmt->fetchAll();
             margin-bottom: 20px;
         }
 
+        /* Form */
         .form-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -448,6 +508,7 @@ $history = $historyStmt->fetchAll();
             background: #185da7;
         }
 
+        /* Table */
         .table-wrap {
             overflow-x: auto;
         }
@@ -502,17 +563,52 @@ $history = $historyStmt->fetchAll();
             line-height: 1.5;
         }
 
+        /* Responsive */
         @media(max-width: 1100px) {
             .stats {
                 grid-template-columns: repeat(3, 1fr);
             }
         }
 
-        @media(max-width: 650px) {
+        @media(max-width: 750px) {
+            .sidebar {
+                width: 68px;
+                min-width: 68px;
+                padding: 20px 8px;
+            }
+
+            .sidebar-brand {
+                font-size: 0;
+                padding: 0 12px 25px;
+            }
+
+            .sidebar-brand i {
+                font-size: 23px;
+            }
+
+            .sidebar-menu a {
+                justify-content: center;
+                padding: 13px 5px;
+            }
+
+            .sidebar-menu a span {
+                display: none;
+            }
+
+            .main-area {
+                margin-left: 68px;
+            }
+
+            .topbar {
+                padding: 0 15px;
+            }
+
             .container {
                 padding: 0 12px;
             }
+        }
 
+        @media(max-width: 650px) {
             .stats {
                 grid-template-columns: repeat(2, 1fr);
             }
@@ -528,375 +624,455 @@ $history = $historyStmt->fetchAll();
             .content {
                 padding: 16px;
             }
+
+            .header h1 {
+                font-size: 22px;
+            }
         }
 
+        @media(max-width: 380px) {
+            .stats {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
-
 </head>
 
 <body>
 
-<div class="container">
+<div class="app-layout">
 
-    <!-- Header -->
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
 
-    <div class="header">
-
-        <div>
-            <h1>
-                <i class="fa-solid fa-boxes-stacked"></i>
-                Stock Management
-            </h1>
-
-            <p>
-                Manage medicine stock, stock movements and inventory history.
-            </p>
+        <div class="sidebar-brand">
+            <i class="fa-solid fa-hospital"></i>
+            MediCare
         </div>
 
-        <a href="index.php" class="back-btn">
-            <i class="fa-solid fa-arrow-left"></i>
-            Pharmacy Inventory
-        </a>
+        <ul class="sidebar-menu">
 
-    </div>
+            <li>
+                <a href="dashboard.php">
+                    <i class="fa-solid fa-chart-pie"></i>
+                    <span>Dashboard</span>
+                </a>
+            </li>
 
-    <!-- Notifications -->
+            <li>
+                <a href="index.php">
+                    <i class="fa-solid fa-pills"></i>
+                    <span>Medicine Inventory</span>
+                </a>
+            </li>
 
-    <?php if ($success !== ''): ?>
-        <div class="alert success">
-            <i class="fa-solid fa-circle-check"></i>
-            <?= e($success) ?>
+            <li>
+                <a href="add.php">
+                    <i class="fa-solid fa-plus-circle"></i>
+                    <span>Add Medicine</span>
+                </a>
+            </li>
+
+            <li>
+                <a href="stock.php" class="active">
+                    <i class="fa-solid fa-boxes-stacked"></i>
+                    <span>Stock Management</span>
+                </a>
+            </li>
+
+            <li>
+                <a href="expiry.php">
+                    <i class="fa-solid fa-calendar-xmark"></i>
+                    <span>Expiry Management</span>
+                </a>
+            </li>
+
+            <li>
+                <a href="low_stock.php">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span>Low Stock Alerts</span>
+                </a>
+            </li>
+
+            <li>
+                <a href="purchase_request.php">
+                    <i class="fa-solid fa-cart-shopping"></i>
+                    <span>Purchase Management</span>
+                </a>
+            </li>
+
+            <li>
+                <a href="reports.php">
+                    <i class="fa-solid fa-chart-column"></i>
+                    <span>Inventory Reports</span>
+                </a>
+            </li>
+
+            <li>
+                <a href="../admin/dashboard.php">
+                    <i class="fa-solid fa-house"></i>
+                    <span>Admin Dashboard</span>
+                </a>
+            </li>
+
+        </ul>
+    </aside>
+
+    <!-- MAIN AREA -->
+    <main class="main-area">
+
+        <div class="topbar">
+            <strong>
+                <i class="fa-solid fa-hospital-user"></i>
+                Pharmacy Management
+            </strong>
+
+            <span><?= date('M d, Y') ?></span>
         </div>
-    <?php endif; ?>
 
-    <?php if ($error !== ''): ?>
-        <div class="alert error">
-            <i class="fa-solid fa-circle-exclamation"></i>
-            <?= e($error) ?>
-        </div>
-    <?php endif; ?>
+        <div class="container">
 
-    <!-- Statistics -->
+            <!-- HEADER -->
+            <div class="header">
 
-    <div class="stats">
+                <div>
+                    <h1>
+                        <i class="fa-solid fa-boxes-stacked"></i>
+                        Stock Management
+                    </h1>
 
-        <div class="stat-card">
-            <div class="stat-icon">
-                <i class="fa-solid fa-pills"></i>
-            </div>
-            <h2><?= number_format($totalMedicines) ?></h2>
-            <p>Total Medicines</p>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-icon">
-                <i class="fa-solid fa-boxes-stacked"></i>
-            </div>
-            <h2><?= number_format($totalUnits) ?></h2>
-            <p>Total Units in Stock</p>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-icon">
-                <i class="fa-solid fa-arrow-down"></i>
-            </div>
-            <h2><?= number_format($stockIn) ?></h2>
-            <p>Total Stock Added</p>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-icon">
-                <i class="fa-solid fa-arrow-up"></i>
-            </div>
-            <h2><?= number_format($stockOut) ?></h2>
-            <p>Total Stock Reduced</p>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-icon">
-                <i class="fa-solid fa-clock-rotate-left"></i>
-            </div>
-            <h2><?= number_format($totalMovements) ?></h2>
-            <p>Total Movements</p>
-        </div>
-
-    </div>
-
-    <!-- Stock Adjustment Form -->
-
-    <div class="content">
-
-        <h2>
-            <i class="fa-solid fa-arrows-rotate"></i>
-            Update Medicine Stock
-        </h2>
-
-        <?php if (empty($medicines)): ?>
-
-            <div class="empty">
-                <i class="fa-solid fa-box-open"></i>
-                <p>No medicines available. Add a medicine first.</p>
-            </div>
-
-        <?php else: ?>
-
-            <form method="POST" action="stock.php">
-
-                <input
-                    type="hidden"
-                    name="csrf_token"
-                    value="<?= e($_SESSION['csrf_token']) ?>"
-                >
-
-                <div class="form-grid">
-
-                    <div class="form-group">
-
-                        <label for="medicine_id">
-                            Select Medicine *
-                        </label>
-
-                        <select
-                            name="medicine_id"
-                            id="medicine_id"
-                            required
-                        >
-
-                            <option value="">
-                                -- Select Medicine --
-                            </option>
-
-                            <?php foreach ($medicines as $medicine): ?>
-
-                                <option
-                                    value="<?= (int)$medicine['id'] ?>"
-                                    data-quantity="<?= (int)$medicine['quantity'] ?>"
-                                >
-                                    <?= e($medicine['medicine_name']) ?>
-                                    (Current: <?= (int)$medicine['quantity'] ?>)
-                                </option>
-
-                            <?php endforeach; ?>
-
-                        </select>
-
-                    </div>
-
-                    <div class="form-group">
-
-                        <label for="movement_type">
-                            Movement Type *
-                        </label>
-
-                        <select
-                            name="movement_type"
-                            id="movement_type"
-                            required
-                        >
-                            <option value="">
-                                -- Select Movement --
-                            </option>
-
-                            <option value="in">
-                                Add Stock
-                            </option>
-
-                            <option value="out">
-                                Reduce Stock
-                            </option>
-
-                        </select>
-
-                    </div>
-
-                    <div class="form-group">
-
-                        <label for="quantity">
-                            Quantity *
-                        </label>
-
-                        <input
-                            type="number"
-                            name="quantity"
-                            id="quantity"
-                            min="1"
-                            step="1"
-                            placeholder="Enter quantity"
-                            required
-                        >
-
-                    </div>
-
-                    <div class="form-group">
-
-                        <label for="notes">
-                            Notes
-                        </label>
-
-                        <input
-                            type="text"
-                            name="notes"
-                            id="notes"
-                            maxlength="255"
-                            placeholder="Reason for stock movement"
-                        >
-
-                    </div>
-
-                    <div class="form-group full-width">
-
-                        <p class="hint" id="stock-info">
-                            Select a medicine to see its current quantity.
-                        </p>
-
-                    </div>
-
-                    <div class="form-group full-width">
-
-                        <button
-                            type="submit"
-                            class="submit-btn"
-                        >
-                            <i class="fa-solid fa-save"></i>
-                            Save Stock Movement
-                        </button>
-
-                    </div>
-
+                    <p>
+                        Manage medicine stock, stock movements and inventory history.
+                    </p>
                 </div>
 
-            </form>
+                <a href="index.php" class="back-btn">
+                    <i class="fa-solid fa-arrow-left"></i>
+                    Pharmacy Inventory
+                </a>
 
-        <?php endif; ?>
+            </div>
 
-    </div>
+            <!-- NOTIFICATIONS -->
+            <?php if ($success !== ''): ?>
+                <div class="alert success">
+                    <i class="fa-solid fa-circle-check"></i>
+                    <?= e($success) ?>
+                </div>
+            <?php endif; ?>
 
-    <!-- Stock History -->
+            <?php if ($error !== ''): ?>
+                <div class="alert error">
+                    <i class="fa-solid fa-circle-exclamation"></i>
+                    <?= e($error) ?>
+                </div>
+            <?php endif; ?>
 
-    <div class="content">
+            <!-- STATISTICS -->
+            <div class="stats">
 
-        <h2>
-            <i class="fa-solid fa-clock-rotate-left"></i>
-            Stock Movement History
-        </h2>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-pills"></i>
+                    </div>
+                    <h2><?= number_format($totalMedicines) ?></h2>
+                    <p>Total Medicines</p>
+                </div>
 
-        <div class="table-wrap">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-boxes-stacked"></i>
+                    </div>
+                    <h2><?= number_format($totalUnits) ?></h2>
+                    <p>Total Units in Stock</p>
+                </div>
 
-            <table>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-arrow-down"></i>
+                    </div>
+                    <h2><?= number_format($stockIn) ?></h2>
+                    <p>Total Stock Added</p>
+                </div>
 
-                <thead>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-arrow-up"></i>
+                    </div>
+                    <h2><?= number_format($stockOut) ?></h2>
+                    <p>Total Stock Reduced</p>
+                </div>
 
-                    <tr>
-                        <th>ID</th>
-                        <th>Medicine</th>
-                        <th>Movement</th>
-                        <th>Quantity</th>
-                        <th>Previous Stock</th>
-                        <th>New Stock</th>
-                        <th>Notes</th>
-                        <th>Updated By</th>
-                        <th>Date</th>
-                    </tr>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                    </div>
+                    <h2><?= number_format($totalMovements) ?></h2>
+                    <p>Total Movements</p>
+                </div>
 
-                </thead>
+            </div>
 
-                <tbody>
+            <!-- STOCK ADJUSTMENT FORM -->
+            <div class="content">
 
-                <?php if (empty($history)): ?>
+                <h2>
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                    Update Medicine Stock
+                </h2>
 
-                    <tr>
-                        <td colspan="9">
-                            <div class="empty">
-                                No stock movement history available.
-                            </div>
-                        </td>
-                    </tr>
+                <?php if (empty($medicines)): ?>
+
+                    <div class="empty">
+                        <i class="fa-solid fa-box-open"></i>
+                        <p>No medicines available. Add a medicine first.</p>
+                    </div>
 
                 <?php else: ?>
 
-                    <?php foreach ($history as $item): ?>
+                    <form method="POST" action="stock.php">
 
-                        <tr>
+                        <input
+                            type="hidden"
+                            name="csrf_token"
+                            value="<?= e($_SESSION['csrf_token']) ?>"
+                        >
 
-                            <td>#<?= (int)$item['id'] ?></td>
+                        <div class="form-grid">
 
-                            <td>
-                                <strong>
-                                    <?= e($item['medicine_name']) ?>
-                                </strong>
-                            </td>
+                            <div class="form-group">
 
-                            <td>
+                                <label for="medicine_id">
+                                    Select Medicine *
+                                </label>
 
-                                <?php if ($item['movement_type'] === 'in'): ?>
+                                <select
+                                    name="medicine_id"
+                                    id="medicine_id"
+                                    required
+                                >
 
-                                    <span class="type-badge type-in">
-                                        <i class="fa-solid fa-arrow-down"></i>
-                                        Stock In
-                                    </span>
+                                    <option value="">
+                                        -- Select Medicine --
+                                    </option>
 
-                                <?php else: ?>
+                                    <?php foreach ($medicines as $medicine): ?>
 
-                                    <span class="type-badge type-out">
-                                        <i class="fa-solid fa-arrow-up"></i>
-                                        Stock Out
-                                    </span>
+                                        <option
+                                            value="<?= (int)$medicine['id'] ?>"
+                                            data-quantity="<?= (int)$medicine['quantity'] ?>"
+                                        >
+                                            <?= e($medicine['medicine_name']) ?>
+                                            (Current: <?= (int)$medicine['quantity'] ?>)
+                                        </option>
 
-                                <?php endif; ?>
+                                    <?php endforeach; ?>
 
-                            </td>
+                                </select>
 
-                            <td>
-                                <?= number_format((int)$item['quantity']) ?>
-                            </td>
+                            </div>
 
-                            <td>
-                                <?= number_format((int)$item['previous_quantity']) ?>
-                            </td>
+                            <div class="form-group">
 
-                            <td>
-                                <strong>
-                                    <?= number_format((int)$item['new_quantity']) ?>
-                                </strong>
-                            </td>
+                                <label for="movement_type">
+                                    Movement Type *
+                                </label>
 
-                            <td>
-                                <?= e($item['notes'] ?? 'N/A') ?>
-                            </td>
+                                <select
+                                    name="movement_type"
+                                    id="movement_type"
+                                    required
+                                >
+                                    <option value="">
+                                        -- Select Movement --
+                                    </option>
 
-                            <td>
-                                <?= e($item['staff_name']) ?>
-                            </td>
+                                    <option value="in">Add Stock</option>
+                                    <option value="out">Reduce Stock</option>
+                                </select>
 
-                            <td>
-                                <?= e(date(
-                                    'M d, Y h:i A',
-                                    strtotime($item['created_at'])
-                                )) ?>
-                            </td>
+                            </div>
 
-                        </tr>
+                            <div class="form-group">
 
-                    <?php endforeach; ?>
+                                <label for="quantity">
+                                    Quantity *
+                                </label>
+
+                                <input
+                                    type="number"
+                                    name="quantity"
+                                    id="quantity"
+                                    min="1"
+                                    step="1"
+                                    placeholder="Enter quantity"
+                                    required
+                                >
+
+                            </div>
+
+                            <div class="form-group">
+
+                                <label for="notes">Notes</label>
+
+                                <input
+                                    type="text"
+                                    name="notes"
+                                    id="notes"
+                                    maxlength="255"
+                                    placeholder="Reason for stock movement"
+                                >
+
+                            </div>
+
+                            <div class="form-group full-width">
+
+                                <p class="hint" id="stock-info">
+                                    Select a medicine to see its current quantity.
+                                </p>
+
+                            </div>
+
+                            <div class="form-group full-width">
+
+                                <button type="submit" class="submit-btn">
+                                    <i class="fa-solid fa-save"></i>
+                                    Save Stock Movement
+                                </button>
+
+                            </div>
+
+                        </div>
+
+                    </form>
 
                 <?php endif; ?>
 
-                </tbody>
+            </div>
 
-            </table>
+            <!-- STOCK HISTORY -->
+            <div class="content">
+
+                <h2>
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    Stock Movement History
+                </h2>
+
+                <div class="table-wrap">
+
+                    <table>
+
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Medicine</th>
+                                <th>Movement</th>
+                                <th>Quantity</th>
+                                <th>Previous Stock</th>
+                                <th>New Stock</th>
+                                <th>Notes</th>
+                                <th>Updated By</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+
+                        <?php if (empty($history)): ?>
+
+                            <tr>
+                                <td colspan="9">
+                                    <div class="empty">
+                                        No stock movement history available.
+                                    </div>
+                                </td>
+                            </tr>
+
+                        <?php else: ?>
+
+                            <?php foreach ($history as $item): ?>
+
+                                <tr>
+
+                                    <td>#<?= (int)$item['id'] ?></td>
+
+                                    <td>
+                                        <strong>
+                                            <?= e($item['medicine_name']) ?>
+                                        </strong>
+                                    </td>
+
+                                    <td>
+                                        <?php if ($item['movement_type'] === 'in'): ?>
+
+                                            <span class="type-badge type-in">
+                                                <i class="fa-solid fa-arrow-down"></i>
+                                                Stock In
+                                            </span>
+
+                                        <?php else: ?>
+
+                                            <span class="type-badge type-out">
+                                                <i class="fa-solid fa-arrow-up"></i>
+                                                Stock Out
+                                            </span>
+
+                                        <?php endif; ?>
+                                    </td>
+
+                                    <td>
+                                        <?= number_format((int)$item['quantity']) ?>
+                                    </td>
+
+                                    <td>
+                                        <?= number_format((int)$item['previous_quantity']) ?>
+                                    </td>
+
+                                    <td>
+                                        <strong>
+                                            <?= number_format((int)$item['new_quantity']) ?>
+                                        </strong>
+                                    </td>
+
+                                    <td>
+                                        <?= e($item['notes'] ?? 'N/A') ?>
+                                    </td>
+
+                                    <td>
+                                        <?= e($item['staff_name']) ?>
+                                    </td>
+
+                                    <td>
+                                        <?= e(date(
+                                            'M d, Y h:i A',
+                                            strtotime($item['created_at'])
+                                        )) ?>
+                                    </td>
+
+                                </tr>
+
+                            <?php endforeach; ?>
+
+                        <?php endif; ?>
+
+                        </tbody>
+
+                    </table>
+
+                </div>
+
+                <p class="hint" style="margin-top:15px;">
+                    Showing the latest 100 stock movements.
+                </p>
+
+            </div>
 
         </div>
-
-        <p class="hint" style="margin-top:15px;">
-            Showing the latest 100 stock movements.
-        </p>
-
-    </div>
+    </main>
 
 </div>
 
 <script>
-
 const medicineSelect = document.getElementById('medicine_id');
 const movementSelect = document.getElementById('movement_type');
 const quantityInput = document.getElementById('quantity');
@@ -904,7 +1080,7 @@ const stockInfo = document.getElementById('stock-info');
 
 function updateStockInfo() {
 
-    if (!medicineSelect || !movementSelect || !quantityInput) {
+    if (!medicineSelect || !movementSelect || !quantityInput || !stockInfo) {
         return;
     }
 
@@ -914,6 +1090,8 @@ function updateStockInfo() {
     if (!selectedOption || !selectedOption.value) {
         stockInfo.textContent =
             'Select a medicine to see its current quantity.';
+
+        quantityInput.removeAttribute('max');
         return;
     }
 
@@ -923,11 +1101,13 @@ function updateStockInfo() {
     const movement = movementSelect.value;
 
     if (movement === 'in') {
+
         stockInfo.textContent =
             'Current stock: ' + currentQuantity +
             '. The entered quantity will be added to this amount.';
 
     } else if (movement === 'out') {
+
         stockInfo.textContent =
             'Current stock: ' + currentQuantity +
             '. You cannot reduce more than the available quantity.';
@@ -935,6 +1115,7 @@ function updateStockInfo() {
         quantityInput.max = currentQuantity;
 
     } else {
+
         stockInfo.textContent =
             'Current stock: ' + currentQuantity + '.';
     }
@@ -948,7 +1129,6 @@ if (medicineSelect && movementSelect) {
     medicineSelect.addEventListener('change', updateStockInfo);
     movementSelect.addEventListener('change', updateStockInfo);
 }
-
 </script>
 
 </body>

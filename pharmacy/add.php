@@ -106,6 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>Add Medicine | MediCare HMS</title>
 
     <link rel="stylesheet"
@@ -124,32 +125,131 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: #263445;
         }
 
-        .container {
-            max-width: 850px;
-            margin: 40px auto;
-            padding: 0 20px;
+        /* Main Layout */
+        .pharmacy-layout {
+            display: flex;
+            min-height: 100vh;
         }
 
-        .header {
-            margin-bottom: 22px;
+        /* Sidebar */
+        .sidebar {
+            width: 250px;
+            flex-shrink: 0;
+            background: #102a43;
+            color: white;
+            padding: 25px 16px;
         }
 
-        .header h1 {
+        .brand {
+            font-size: 23px;
+            font-weight: 800;
+            padding: 0 12px 28px;
+            border-bottom: 1px solid #ffffff20;
+        }
+
+        .brand span {
+            color: #38bdf8;
+        }
+
+        .sidebar h4 {
+            color: #9fb3c8;
+            font-size: 11px;
+            letter-spacing: 1.5px;
+            margin: 28px 12px 12px;
+        }
+
+        .sidebar a {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #d9e6f2;
+            text-decoration: none;
+            padding: 12px;
+            margin: 5px 0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: .2s;
+        }
+
+        .sidebar a i {
+            width: 19px;
+            text-align: center;
+            font-size: 15px;
+        }
+
+        .sidebar a:hover {
+            background: #1d4e89;
+            color: white;
+        }
+
+        .sidebar a.active {
+            background: #2563eb;
+            color: white;
+            font-weight: 700;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            min-width: 0;
+            padding: 28px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 28px;
+        }
+
+        .topbar h1 {
             font-size: 27px;
-            margin-bottom: 8px;
+            margin-bottom: 7px;
         }
 
-        .header p {
-            color: #718096;
+        .topbar p {
+            color: #64748b;
             font-size: 14px;
         }
 
-        .card {
+        .date-label {
             background: white;
-            padding: 28px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            color: #475569;
+            font-size: 13px;
+            box-shadow: 0 3px 12px #0f172a08;
+        }
+
+        /* Form Container */
+        .form-container {
+            max-width: 950px;
+        }
+
+        .form-card {
+            background: white;
+            padding: 30px;
             border-radius: 13px;
             border: 1px solid #edf0f5;
             box-shadow: 0 4px 18px rgba(0,0,0,.04);
+        }
+
+        .form-card-header {
+            margin-bottom: 25px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid #edf1f5;
+        }
+
+        .form-card-header h2 {
+            font-size: 19px;
+            margin-bottom: 7px;
+            color: #102a43;
+        }
+
+        .form-card-header p {
+            color: #718096;
+            font-size: 13px;
         }
 
         .form-grid {
@@ -171,15 +271,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-size: 13px;
             font-weight: 600;
             margin-bottom: 8px;
+            color: #34445a;
         }
 
         input {
             width: 100%;
-            padding: 12px 13px;
+            padding: 13px;
             border: 1px solid #dce3ec;
             border-radius: 8px;
             font-size: 14px;
             outline: none;
+            background: #fff;
+            transition: .2s;
         }
 
         input:focus {
@@ -191,16 +294,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             display: block;
             color: #8290a2;
             font-size: 12px;
-            margin-top: 6px;
+            margin-top: 7px;
         }
 
+        /* Error Messages */
         .errors {
             background: #fff0ef;
             border: 1px solid #ffd1cd;
             color: #b42318;
             padding: 14px 18px;
             border-radius: 8px;
-            margin-bottom: 20px;
+            margin-bottom: 22px;
         }
 
         .errors ul {
@@ -208,31 +312,102 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-top: 7px;
         }
 
+        .errors li {
+            margin-bottom: 5px;
+            font-size: 13px;
+        }
+
+        /* Buttons */
         .actions {
             display: flex;
-            gap: 10px;
+            gap: 12px;
             flex-wrap: wrap;
-            margin-top: 5px;
+            margin-top: 8px;
+            padding-top: 20px;
+            border-top: 1px solid #edf1f5;
         }
 
         .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
             border: none;
             border-radius: 8px;
-            padding: 12px 19px;
+            padding: 12px 20px;
             font-weight: 600;
             cursor: pointer;
             text-decoration: none;
             font-size: 14px;
+            transition: .2s;
         }
 
         .save {
-            background: #2874c7;
+            background: #2563eb;
             color: white;
+        }
+
+        .save:hover {
+            background: #1d4ed8;
+            transform: translateY(-1px);
         }
 
         .cancel {
             background: #edf1f6;
             color: #34445a;
+        }
+
+        .cancel:hover {
+            background: #dce3ec;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 25px 10px;
+            color: #94a3b8;
+            font-size: 12px;
+        }
+
+        /* Responsive */
+        @media(max-width: 900px) {
+            .sidebar {
+                width: 220px;
+            }
+
+            .main-content {
+                padding: 22px;
+            }
+        }
+
+        @media(max-width: 750px) {
+            .sidebar {
+                width: 65px;
+                padding: 20px 7px;
+            }
+
+            .brand {
+                font-size: 17px;
+                padding: 5px 3px 20px;
+                text-align: center;
+            }
+
+            .sidebar h4 {
+                display: none;
+            }
+
+            .sidebar a {
+                justify-content: center;
+                padding: 14px 4px;
+                font-size: 0;
+            }
+
+            .sidebar a i {
+                font-size: 18px;
+            }
+
+            .main-content {
+                padding: 17px;
+            }
         }
 
         @media(max-width: 600px) {
@@ -245,8 +420,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 grid-column: auto;
             }
 
-            .card {
+            .form-card {
                 padding: 19px;
+            }
+
+            .topbar {
+                align-items: flex-start;
+                flex-direction: column;
             }
         }
     </style>
@@ -254,115 +434,220 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <body>
 
-<div class="container">
+<div class="pharmacy-layout">
 
-    <div class="header">
-        <h1><i class="fa-solid fa-circle-plus"></i> Add New Medicine</h1>
-        <p>Register a medicine in the pharmacy inventory.</p>
-    </div>
+    <!-- Sidebar -->
+    <aside class="sidebar">
 
-    <div class="card">
+        <div class="brand">
+            Medi<span>Care</span>
+        </div>
 
-        <?php if (!empty($errors)): ?>
-            <div class="errors">
-                <strong>Please correct the following:</strong>
-                <ul>
-                    <?php foreach ($errors as $error): ?>
-                        <li><?= e($error) ?></li>
-                    <?php endforeach; ?>
-                </ul>
-            </div>
-        <?php endif; ?>
+        <h4>PHARMACY MENU</h4>
 
-        <form method="POST">
+        <a href="dashboard.php">
+            <i class="fa-solid fa-house"></i>
+            Dashboard
+        </a>
 
-            <input type="hidden"
-                   name="csrf_token"
-                   value="<?= e($_SESSION['csrf_token']) ?>">
+        <a href="index.php">
+            <i class="fa-solid fa-capsules"></i>
+            Medicine Inventory
+        </a>
 
-            <div class="form-grid">
+        <a href="add.php" class="active">
+            <i class="fa-solid fa-circle-plus"></i>
+            Add Medicine
+        </a>
 
-                <div class="form-group full">
-                    <label for="medicine_name">Medicine Name *</label>
-                    <input
-                        type="text"
-                        id="medicine_name"
-                        name="medicine_name"
-                        maxlength="150"
-                        value="<?= e($medicineName) ?>"
-                        placeholder="e.g. Paracetamol 500mg"
-                        required
-                    >
-                </div>
+        <a href="stock.php">
+            <i class="fa-solid fa-boxes-stacked"></i>
+            Stock Management
+        </a>
 
-                <div class="form-group">
-                    <label for="category">Category *</label>
-                    <input
-                        type="text"
-                        id="category"
-                        name="category"
-                        maxlength="100"
-                        value="<?= e($category) ?>"
-                        placeholder="e.g. Painkiller"
-                        required
-                    >
-                </div>
+        <a href="expiry.php">
+            <i class="fa-solid fa-calendar-xmark"></i>
+            Expiry Management
+        </a>
 
-                <div class="form-group">
-                    <label for="quantity">Quantity *</label>
-                    <input
-                        type="number"
-                        id="quantity"
-                        name="quantity"
-                        min="0"
-                        step="1"
-                        value="<?= e($quantity) ?>"
-                        placeholder="e.g. 100"
-                        required
-                    >
-                </div>
+        <a href="low_stock.php">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            Low Stock Alerts
+        </a>
 
-                <div class="form-group">
-                    <label for="unit_price">Unit Price *</label>
-                    <input
-                        type="number"
-                        id="unit_price"
-                        name="unit_price"
-                        min="0"
-                        step="0.01"
-                        value="<?= e($unitPrice) ?>"
-                        placeholder="e.g. 5.50"
-                        required
-                    >
-                </div>
+        <a href="purchase_request.php">
+            <i class="fa-solid fa-cart-shopping"></i>
+            Purchase Management
+        </a>
 
-                <div class="form-group">
-                    <label for="expiry_date">Expiry Date</label>
-                    <input
-                        type="date"
-                        id="expiry_date"
-                        name="expiry_date"
-                        value="<?= e($expiryDate) ?>"
-                    >
-                    <span class="hint">Leave blank if not applicable.</span>
-                </div>
+        <a href="reports.php">
+            <i class="fa-solid fa-chart-column"></i>
+            Inventory Reports
+        </a>
 
+        <h4>MAIN SYSTEM</h4>
+
+        <a href="../admin/dashboard.php">
+            <i class="fa-solid fa-arrow-left"></i>
+            Admin Dashboard
+        </a>
+
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+        <div class="topbar">
+            <div>
+                <h1>
+                    <i class="fa-solid fa-circle-plus" style="color:#2563eb;"></i>
+                    Add New Medicine
+                </h1>
+                <p>Register a new medicine in the pharmacy inventory.</p>
             </div>
 
-            <div class="actions">
-                <button type="submit" class="btn save">
-                    <i class="fa-solid fa-floppy-disk"></i>
-                    Save Medicine
-                </button>
+            <div class="date-label">
+                <i class="fa-regular fa-calendar"></i>
+                <?= date('F d, Y') ?>
+            </div>
+        </div>
 
-                <a href="index.php" class="btn cancel">
-                    Cancel
-                </a>
+        <div class="form-container">
+
+            <div class="form-card">
+
+                <div class="form-card-header">
+                    <h2>Medicine Information</h2>
+                    <p>Enter the medicine details below to add it to your inventory.</p>
+                </div>
+
+                <?php if (!empty($errors)): ?>
+                    <div class="errors">
+                        <strong>
+                            <i class="fa-solid fa-circle-exclamation"></i>
+                            Please correct the following:
+                        </strong>
+
+                        <ul>
+                            <?php foreach ($errors as $error): ?>
+                                <li><?= e($error) ?></li>
+                            <?php endforeach; ?>
+                        </ul>
+                    </div>
+                <?php endif; ?>
+
+                <form method="POST">
+
+                    <input
+                        type="hidden"
+                        name="csrf_token"
+                        value="<?= e($_SESSION['csrf_token']) ?>"
+                    >
+
+                    <div class="form-grid">
+
+                        <div class="form-group full">
+                            <label for="medicine_name">Medicine Name *</label>
+
+                            <input
+                                type="text"
+                                id="medicine_name"
+                                name="medicine_name"
+                                maxlength="150"
+                                value="<?= e($medicineName) ?>"
+                                placeholder="e.g. Paracetamol 500mg"
+                                required
+                            >
+                        </div>
+
+                        <div class="form-group">
+                            <label for="category">Category *</label>
+
+                            <input
+                                type="text"
+                                id="category"
+                                name="category"
+                                maxlength="100"
+                                value="<?= e($category) ?>"
+                                placeholder="e.g. Painkiller"
+                                required
+                            >
+                        </div>
+
+                        <div class="form-group">
+                            <label for="quantity">Quantity *</label>
+
+                            <input
+                                type="number"
+                                id="quantity"
+                                name="quantity"
+                                min="0"
+                                step="1"
+                                value="<?= e($quantity) ?>"
+                                placeholder="e.g. 100"
+                                required
+                            >
+                        </div>
+
+                        <div class="form-group">
+                            <label for="unit_price">Unit Price *</label>
+
+                            <input
+                                type="number"
+                                id="unit_price"
+                                name="unit_price"
+                                min="0"
+                                step="0.01"
+                                value="<?= e($unitPrice) ?>"
+                                placeholder="e.g. 5.50"
+                                required
+                            >
+                        </div>
+
+                        <div class="form-group">
+                            <label for="expiry_date">Expiry Date</label>
+
+                            <input
+                                type="date"
+                                id="expiry_date"
+                                name="expiry_date"
+                                value="<?= e($expiryDate) ?>"
+                            >
+
+                            <span class="hint">
+                                Leave blank if not applicable.
+                            </span>
+                        </div>
+
+                    </div>
+
+                    <div class="actions">
+
+                        <button type="submit" class="btn save">
+                            <i class="fa-solid fa-floppy-disk"></i>
+                            Save Medicine
+                        </button>
+
+                        <a href="index.php" class="btn cancel">
+                            <i class="fa-solid fa-xmark"></i>
+                            Cancel
+                        </a>
+
+                    </div>
+
+                </form>
+
             </div>
 
-        </form>
+        </div>
 
-    </div>
+        <div class="footer">
+            © <?= date('Y') ?> MediCare Hospital Management System.
+            Pharmacy Management Module.
+        </div>
+
+    </main>
+
 </div>
 
 </body>

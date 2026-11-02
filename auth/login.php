@@ -4,38 +4,42 @@
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/session.php';
 
-// Redirect logged-in users according to their role
-if (isset($_SESSION['user_id'], $_SESSION['role'])) {
+// All user dashboards
+$dashboards = [
+    'admin' => '../admin/dashboard.php',
+    'doctor' => '../doctor/dashboard.php',
+    'receptionist' => '../receptionist/dashboard.php',
+    'pharmacist' => '../pharmacy/dashboard.php',
+    'cashier' => '../cashier/dashboard.php',
+    'patient' => '../patient/dashboard.php',
 
-    $dashboards = [
-        'admin' => '../admin/dashboard.php',
-        'doctor' => '../doctor/dashboard.php',
-        'receptionist' => '../receptionist/dashboard.php',
-        'pharmacist' => '../pharmacy/dashboard.php',
-        'cashier' => '../cashier/dashboard.php',
-        'patient' => '../patient/dashboard.php'
-    ];
+    // Laboratory roles
+    'lab_technician' => '../laboratory/technician/dashboard.php',
+    'lab_doctor' => '../laboratory/doctor/dashboard.php'
+];
+
+// Redirect already logged-in users
+if (isset($_SESSION['user_id'], $_SESSION['role'])) {
 
     $role = $_SESSION['role'];
 
     if (isset($dashboards[$role])) {
-        header("Location: " . $dashboards[$role]);
+        header('Location: ' . $dashboards[$role]);
         exit;
     }
 }
 
-$error = "";
+$error = '';
 
 // Process login form
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // CSRF validation
     if (
-        !isset($_POST['csrf_token']) ||
-        !isset($_SESSION['csrf_token']) ||
+        !isset($_POST['csrf_token'], $_SESSION['csrf_token']) ||
         !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])
     ) {
-        $error = "Invalid request. Please refresh the page.";
+        $error = 'Invalid request. Please refresh the page.';
 
     } else {
 
@@ -48,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$email || $password === '') {
 
-            $error = "Please enter valid login details.";
+            $error = 'Please enter valid login details.';
 
         } else {
 
@@ -69,17 +73,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 password_verify($password, $user['password'])
             ) {
 
-                $dashboards = [
-                    'admin' => '../admin/dashboard.php',
-                    'doctor' => '../doctor/dashboard.php',
-                    'receptionist' => '../receptionist/dashboard.php',
-                    'pharmacist' => '../pharmacy/dashboard.php',
-                    'cashier' => '../cashier/dashboard.php',
-                    'patient' => '../patient/dashboard.php'
-                ];
+                $role = $user['role'];
 
-                if (!isset($dashboards[$user['role']])) {
-                    $error = "Dashboard not configured for this account.";
+                if (!isset($dashboards[$role])) {
+
+                    $error = 'Dashboard not configured for this account.';
 
                 } else {
 
@@ -90,23 +88,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['user_id'] = $user['id'];
                     $_SESSION['full_name'] = $user['full_name'];
                     $_SESSION['email'] = $user['email'];
-                    $_SESSION['role'] = $user['role'];
+                    $_SESSION['role'] = $role;
 
-                    // Redirect to correct dashboard
-                    header("Location: " . $dashboards[$user['role']]);
+                    // Regenerate CSRF token
+                    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+
+                    // Redirect to dashboard
+                    header('Location: ' . $dashboards[$role]);
                     exit;
                 }
 
             } else {
 
-                $error = "Invalid email or password.";
+                $error = 'Invalid email or password.';
 
             }
         }
     }
 }
 
-// Generate CSRF token if missing
+// Generate CSRF token
 if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
@@ -229,7 +230,7 @@ if (!isset($_SESSION['csrf_token'])) {
 
     <?php if ($error): ?>
         <div class="error">
-            <?= htmlspecialchars($error) ?>
+            <?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?>
         </div>
     <?php endif; ?>
 
@@ -238,7 +239,7 @@ if (!isset($_SESSION['csrf_token'])) {
         <input
             type="hidden"
             name="csrf_token"
-            value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
+            value="<?= htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8') ?>"
         >
 
         <div class="form-group">

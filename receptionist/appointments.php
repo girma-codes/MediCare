@@ -5,7 +5,8 @@ require_once __DIR__ . '/../config/database.php';
 
 requireRole(['receptionist']);
 
-// CSRF protection
+date_default_timezone_set('Africa/Addis_Ababa');
+
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
@@ -17,68 +18,144 @@ function e($value) {
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
 
-// Register a new appointment and notify the patient
+function validAppointmentDateTime($date, $time) {
+    $dateObj = DateTime::createFromFormat('!Y-m-d', $date);
+    $timeObj = DateTime::createFromFormat('!H:i', $time);
+
+    if (!$dateObj || $dateObj->format('Y-m-d') !== $date) {
+        return false;
+    }
+
+    if (!$timeObj || $timeObj->format('H:i') !== $time) {
+        return false;
+    }
+
+    // Appointment slots must be every 30 minutes.
+    $minutes = (int)$timeObj->format('i');
+
+    if (!in_array($minutes, [0, 30], true)) {
+        return false;
+    }
+
+    $selected = new DateTime("$date $time");
+    $now = new DateTime();
+
+    return $selected >= $now;
+}
+
+// Create appointment
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_appointment'])) {
 
     if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
         $error = "Invalid request. Please refresh the page.";
     } else {
-        $patient_id = (int)($_POST['patient_id'] ?? 0);
-        $doctor_id = (int)($_POST['doctor_id'] ?? 0);
-        $appointment_date = $_POST['appointment_date'] ?? '';
-        $appointment_time = $_POST['appointment_time'] ?? '';
+        $patient_id = filter_var($_POST['patient_id'] ?? '', FILTER_VALIDATE_INT);
+        $doctor_id = filter_var($_POST['doctor_id'] ?? '', FILTER_VALIDATE_INT);
+        $appointment_date = trim($_POST['appointment_date'] ?? '');
+        $appointment_time = trim($_POST['appointment_time'] ?? '');
         $reason = trim($_POST['reason'] ?? '');
 
         if (!$patient_id || !$doctor_id || !$appointment_date || !$appointment_time) {
             $error = "Please fill in all required fields.";
+        } elseif (!validAppointmentDateTime($appointment_date, $appointment_time)) {
+            $error = "Invalid date or time. Select a future date and a valid 30-minute time slot.";
+        } elseif (strlen($reason) > 1000) {
+            $error = "Appointment reason is too long.";
         } else {
             try {
-                // Verify patient and doctor
-                $check = $pdo->prepare("
-                    SELECT p.user_id,
-                           (SELECT COUNT(*) FROM doctors WHERE id = ?) AS doctor_exists
-                    FROM patients p
-                    WHERE p.id = ?
+                $pdo->beginTransaction();
+
+                // Lock patient and doctor rows to reduce concurrent booking conflicts.
+                $patientCheck = $pdo->prepare("
+                    SELECT user_id
+                    FROM patients
+                    WHERE id = ?
+                    FOR UPDATE
+                ");
+                $patientCheck->execute([$patient_id]);
+                $patient = $patientCheck->fetch(PDO::FETCH_ASSOC);
+
+                $doctorCheck = $pdo->prepare("
+                    SELECT id
+                    FROM doctors
+                    WHERE id = ?
+                    FOR UPDATE
+                ");
+                $doctorCheck->execute([$doctor_id]);
+                $doctor = $doctorCheck->fetch(PDO::FETCH_ASSOC);
+
+                if (!$patient || !$doctor) {
+                    throw new Exception("Selected patient or doctor does not exist.");
+                }
+
+                // Check whether the doctor already has an active appointment.
+                $doctorConflict = $pdo->prepare("
+                    SELECT id
+                    FROM appointments
+                    WHERE doctor_id = ?
+                      AND appointment_date = ?
+                      AND appointment_time = ?
+                      AND status IN ('pending', 'confirmed')
                     LIMIT 1
                 ");
-                $check->execute([$doctor_id, $patient_id]);
-                $valid = $check->fetch();
+                $doctorConflict->execute([
+                    $doctor_id,
+                    $appointment_date,
+                    $appointment_time
+                ]);
 
-                if (!$valid || !$valid['doctor_exists']) {
-                    $error = "Selected patient or doctor does not exist.";
-                } else {
-                    $pdo->beginTransaction();
-
-                    $insert = $pdo->prepare("
-                        INSERT INTO appointments
-                        (patient_id, doctor_id, appointment_date,
-                         appointment_time, reason, status)
-                        VALUES (?, ?, ?, ?, ?, 'pending')
-                    ");
-
-                    $insert->execute([
-                        $patient_id,
-                        $doctor_id,
-                        $appointment_date,
-                        $appointment_time,
-                        $reason
-                    ]);
-
-                    // Notify patient account, not patients.id
-                    $notification = $pdo->prepare("
-                        INSERT INTO notifications (user_id, message, is_read)
-                        VALUES (?, ?, 0)
-                    ");
-
-                    $notification->execute([
-                        $valid['user_id'],
-                        "Your appointment request has been registered successfully. Your appointment is currently pending approval."
-                    ]);
-
-                    $pdo->commit();
-
-                    $message = "Appointment registered successfully! Patient has been notified.";
+                if ($doctorConflict->fetch()) {
+                    throw new Exception("This doctor already has an appointment at the selected time.");
                 }
+
+                // Check whether the patient already has an active appointment.
+                $patientConflict = $pdo->prepare("
+                    SELECT id
+                    FROM appointments
+                    WHERE patient_id = ?
+                      AND appointment_date = ?
+                      AND appointment_time = ?
+                      AND status IN ('pending', 'confirmed')
+                    LIMIT 1
+                ");
+                $patientConflict->execute([
+                    $patient_id,
+                    $appointment_date,
+                    $appointment_time
+                ]);
+
+                if ($patientConflict->fetch()) {
+                    throw new Exception("This patient already has an appointment at the selected time.");
+                }
+
+                $insert = $pdo->prepare("
+                    INSERT INTO appointments
+                    (patient_id, doctor_id, appointment_date,
+                     appointment_time, reason, status)
+                    VALUES (?, ?, ?, ?, ?, 'pending')
+                ");
+
+                $insert->execute([
+                    $patient_id,
+                    $doctor_id,
+                    $appointment_date,
+                    $appointment_time . ':00',
+                    $reason
+                ]);
+
+                $notification = $pdo->prepare("
+                    INSERT INTO notifications (user_id, message, is_read)
+                    VALUES (?, ?, 0)
+                ");
+
+                $notification->execute([
+                    $patient['user_id'],
+                    "Your appointment request has been registered successfully. Your appointment is currently pending approval."
+                ]);
+
+                $pdo->commit();
+
+                $message = "Appointment registered successfully! Patient has been notified.";
 
             } catch (Throwable $ex) {
                 if ($pdo->inTransaction()) {
@@ -86,29 +163,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_appointment'])
                 }
 
                 error_log($ex->getMessage());
-                $error = "Could not register appointment. Please try again.";
+
+                if (
+                    str_contains($ex->getMessage(), 'already has an appointment') ||
+                    str_contains($ex->getMessage(), 'does not exist')
+                ) {
+                    $error = $ex->getMessage();
+                } else {
+                    $error = "Could not register appointment. Please try again.";
+                }
             }
         }
     }
 }
 
-// Update appointment status and notify the patient
+// Update appointment status
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
 
     if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
         $error = "Invalid request. Please refresh the page.";
     } else {
-        $appointment_id = (int)($_POST['appointment_id'] ?? 0);
+        $appointment_id = filter_var($_POST['appointment_id'] ?? '', FILTER_VALIDATE_INT);
         $new_status = $_POST['status'] ?? '';
 
         $allowed_statuses = ['pending', 'confirmed', 'completed', 'cancelled'];
 
-        if ($appointment_id > 0 && in_array($new_status, $allowed_statuses, true)) {
-
+        if ($appointment_id && in_array($new_status, $allowed_statuses, true)) {
             try {
                 $pdo->beginTransaction();
 
-                // Lock appointment and find patient user account
                 $check = $pdo->prepare("
                     SELECT a.status, p.user_id
                     FROM appointments a
@@ -117,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
                     FOR UPDATE
                 ");
                 $check->execute([$appointment_id]);
-                $appointment = $check->fetch();
+                $appointment = $check->fetch(PDO::FETCH_ASSOC);
 
                 if (!$appointment) {
                     throw new Exception("Appointment not found.");
@@ -134,7 +217,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
                     ");
                     $update->execute([$new_status, $appointment_id]);
 
-                    $status_messages = [
+                    $statusMessages = [
                         'pending' => 'Your appointment is now pending approval.',
                         'confirmed' => 'Good news! Your appointment has been confirmed.',
                         'completed' => 'Your appointment has been marked as completed.',
@@ -148,13 +231,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
 
                     $notification->execute([
                         $appointment['user_id'],
-                        $status_messages[$new_status]
+                        $statusMessages[$new_status]
                     ]);
 
                     $message = "Appointment status updated successfully! Patient has been notified.";
-
                 } else {
-                    $message = "Appointment status has not changed. No new notification was sent.";
+                    $message = "Appointment status has not changed.";
                 }
 
                 $pdo->commit();
@@ -167,29 +249,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
                 error_log($ex->getMessage());
                 $error = "Could not update appointment status. Please try again.";
             }
-
         } else {
             $error = "Invalid appointment information.";
         }
     }
 }
 
-// Get patients
+// Patients
 $patients = $pdo->query("
     SELECT p.id, p.patient_number, u.full_name
     FROM patients p
     JOIN users u ON p.user_id = u.id
     ORDER BY u.full_name ASC
-")->fetchAll();
+")->fetchAll(PDO::FETCH_ASSOC);
 
-// Get doctors
+// Doctors
 $doctors = $pdo->query("
     SELECT d.id, u.full_name, d.specialization, dep.name AS department
     FROM doctors d
     JOIN users u ON d.user_id = u.id
     LEFT JOIN departments dep ON d.department_id = dep.id
     ORDER BY u.full_name ASC
-")->fetchAll();
+")->fetchAll(PDO::FETCH_ASSOC);
 
 // Search and filter
 $search = trim($_GET['search'] ?? '');
@@ -233,227 +314,241 @@ $sql .= " ORDER BY a.appointment_date DESC, a.appointment_time DESC";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
-$appointments = $stmt->fetchAll();
+$appointments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Dashboard statistics
+// Statistics
 $stats = $pdo->query("
     SELECT
         COUNT(*) AS total,
-        SUM(status = 'pending') AS pending,
-        SUM(status = 'confirmed') AS confirmed,
-        SUM(status = 'completed') AS completed,
-        SUM(status = 'cancelled') AS cancelled
+        COALESCE(SUM(status = 'pending'), 0) AS pending,
+        COALESCE(SUM(status = 'confirmed'), 0) AS confirmed,
+        COALESCE(SUM(status = 'completed'), 0) AS completed,
+        COALESCE(SUM(status = 'cancelled'), 0) AS cancelled
     FROM appointments
-")->fetch();
+")->fetch(PDO::FETCH_ASSOC);
 
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Appointment Management | MediCare HMS</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Appointment Management | MediCare HMS</title>
 
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
 
-        body {
-            font-family: Arial, sans-serif;
-            background: #f4f7fb;
-            color: #263445;
-        }
+body {
+    font-family:Arial,sans-serif;
+    background:#f3f6fb;
+    color:#263445;
+}
 
-        .header {
-            background: #102d46;
-            color: white;
-            padding: 22px 35px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
+.header {
+    background:#102a43;
+    color:white;
+    padding:22px 35px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:15px;
+}
 
-        .header h2 { font-size: 23px; }
+.header h2 { font-size:23px; margin-bottom:5px; }
 
-        .header a {
-            color: white;
-            text-decoration: none;
-            margin-left: 15px;
-        }
+.header a {
+    color:white;
+    text-decoration:none;
+    margin-left:18px;
+}
 
-        .container {
-            max-width: 1400px;
-            margin: 30px auto;
-            padding: 0 20px;
-        }
+.container {
+    max-width:1450px;
+    margin:30px auto;
+    padding:0 20px;
+}
 
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-            gap: 18px;
-            margin-bottom: 25px;
-        }
+.page-heading { margin-bottom:25px; }
 
-        .stat-card {
-            background: white;
-            padding: 22px;
-            border-radius: 12px;
-            box-shadow: 0 3px 12px rgba(0,0,0,.05);
-        }
+.page-heading h1 {
+    font-size:27px;
+    margin-bottom:8px;
+}
 
-        .stat-card h3 {
-            font-size: 28px;
-            margin-bottom: 8px;
-            color: #087e8b;
-        }
+.muted { color:#718096; }
 
-        .stat-card p { color: #718096; }
+.stats {
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+    gap:18px;
+    margin-bottom:25px;
+}
 
-        .panel {
-            background: white;
-            padding: 25px;
-            border-radius: 12px;
-            margin-bottom: 25px;
-            box-shadow: 0 3px 12px rgba(0,0,0,.05);
-        }
+.stat-card,.panel {
+    background:white;
+    border-radius:13px;
+    box-shadow:0 3px 14px rgba(0,0,0,.04);
+}
 
-        .panel h2 {
-            margin-bottom: 20px;
-            font-size: 21px;
-        }
+.stat-card { padding:22px; }
 
-        .form-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 18px;
-        }
+.stat-card h3 {
+    font-size:28px;
+    color:#2563eb;
+    margin-bottom:8px;
+}
 
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
+.stat-card p { color:#718096; }
 
-        .form-group label {
-            font-weight: bold;
-            font-size: 14px;
-        }
+.panel {
+    padding:25px;
+    margin-bottom:25px;
+}
 
-        input, select, textarea {
-            padding: 12px;
-            border: 1px solid #d9e1eb;
-            border-radius: 7px;
-            font-size: 14px;
-            width: 100%;
-        }
+.panel h2 {
+    font-size:20px;
+    margin-bottom:20px;
+}
 
-        textarea {
-            resize: vertical;
-            min-height: 80px;
-        }
+.form-grid {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:18px;
+}
 
-        .full-width { grid-column: 1 / -1; }
+.form-group {
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+}
 
-        button {
-            background: #087e8b;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 7px;
-            cursor: pointer;
-            font-weight: bold;
-        }
+.form-group label {
+    font-weight:bold;
+    font-size:14px;
+}
 
-        button:hover { background: #06636d; }
+input,select,textarea {
+    width:100%;
+    padding:12px;
+    border:1px solid #d9e1eb;
+    border-radius:8px;
+    font-size:14px;
+    background:white;
+}
 
-        .message {
-            padding: 14px;
-            border-radius: 7px;
-            margin-bottom: 18px;
-            background: #d9f7e8;
-            color: #12643a;
-        }
+input:focus,select:focus,textarea:focus {
+    outline:none;
+    border-color:#2563eb;
+    box-shadow:0 0 0 3px rgba(37,99,235,.10);
+}
 
-        .error {
-            background: #ffe0e0;
-            color: #a12626;
-        }
+textarea { resize:vertical; min-height:85px; }
 
-        .filter-form {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }
+.full-width { grid-column:1/-1; }
 
-        .filter-form input {
-            flex: 1;
-            min-width: 200px;
-        }
+button {
+    background:#2563eb;
+    color:white;
+    border:0;
+    padding:12px 20px;
+    border-radius:8px;
+    cursor:pointer;
+    font-weight:bold;
+}
 
-        .table-wrapper { overflow-x: auto; }
+button:hover { background:#1d4ed8; }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 900px;
-        }
+.message {
+    padding:14px;
+    border-radius:8px;
+    margin-bottom:18px;
+    background:#dcfce7;
+    color:#166534;
+}
 
-        th, td {
-            padding: 14px;
-            border-bottom: 1px solid #edf0f5;
-            text-align: left;
-            font-size: 14px;
-        }
+.error {
+    background:#fee2e2;
+    color:#991b1b;
+}
 
-        th {
-            background: #f5f8fb;
-            color: #536477;
-        }
+.slot-note {
+    margin-top:8px;
+    color:#64748b;
+    font-size:12px;
+}
 
-        .status {
-            padding: 6px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-            text-transform: capitalize;
-        }
+.filter-form {
+    display:flex;
+    gap:12px;
+    margin-bottom:20px;
+    flex-wrap:wrap;
+}
 
-        .pending { background: #fff0c2; color: #8a6200; }
-        .confirmed { background: #d8edff; color: #075b9b; }
-        .completed { background: #d8f5e5; color: #187044; }
-        .cancelled { background: #ffe0e0; color: #a12626; }
+.filter-form input { flex:1; min-width:200px; }
+.filter-form select { width:auto; min-width:150px; }
 
-        .status-form {
-            display: flex;
-            gap: 7px;
-        }
+.table-wrapper { overflow-x:auto; }
 
-        .status-form select {
-            min-width: 115px;
-            padding: 7px;
-        }
+table {
+    width:100%;
+    border-collapse:collapse;
+    min-width:950px;
+}
 
-        .status-form button { padding: 8px 10px; }
+th,td {
+    padding:14px 12px;
+    border-bottom:1px solid #edf0f5;
+    text-align:left;
+    font-size:13px;
+}
 
-        .empty {
-            text-align: center;
-            padding: 30px;
-            color: #718096;
-        }
+th {
+    background:#f5f8fb;
+    color:#536477;
+}
 
-        @media(max-width: 650px) {
-            .form-grid { grid-template-columns: 1fr; }
-            .header { padding: 20px; }
-            .panel { padding: 17px; }
-        }
-    </style>
+.status {
+    display:inline-block;
+    padding:6px 10px;
+    border-radius:20px;
+    font-size:11px;
+    font-weight:bold;
+    text-transform:capitalize;
+}
+
+.pending { background:#fff0c2; color:#8a6200; }
+.confirmed { background:#d8edff; color:#075b9b; }
+.completed { background:#d8f5e5; color:#187044; }
+.cancelled { background:#ffe0e0; color:#a12626; }
+
+.status-form {
+    display:flex;
+    gap:7px;
+}
+
+.status-form select {
+    min-width:110px;
+    padding:8px;
+}
+
+.status-form button { padding:8px 12px; }
+
+.empty {
+    text-align:center;
+    padding:30px;
+    color:#718096;
+}
+
+@media(max-width:650px) {
+    .form-grid { grid-template-columns:1fr; }
+    .header { padding:20px; }
+    .panel { padding:17px; }
+    .container { padding:0 12px; }
+    .filter-form input,.filter-form select { width:100%; }
+}
+</style>
 </head>
 
 <body>
@@ -463,19 +558,19 @@ $stats = $pdo->query("
         <h2>MediCare HMS</h2>
         <p>Receptionist Portal</p>
     </div>
-
     <nav>
         <a href="dashboard.php">Dashboard</a>
+        <a href="../patients/index.php">Patients</a>
         <a href="../logout.php">Logout</a>
     </nav>
 </header>
 
 <main class="container">
 
-    <h1 style="margin-bottom:8px;">Appointment Management</h1>
-    <p style="color:#718096;margin-bottom:25px;">
-        Register, search and manage patient appointments.
-    </p>
+    <div class="page-heading">
+        <h1>Appointment Management</h1>
+        <p class="muted">Register, search and manage patient appointments.</p>
+    </div>
 
     <?php if ($message): ?>
         <div class="message"><?= e($message) ?></div>
@@ -485,48 +580,40 @@ $stats = $pdo->query("
         <div class="message error"><?= e($error) ?></div>
     <?php endif; ?>
 
-    <!-- Statistics -->
     <section class="stats">
         <div class="stat-card">
             <h3><?= (int)$stats['total'] ?></h3>
             <p>Total Appointments</p>
         </div>
-
         <div class="stat-card">
             <h3><?= (int)$stats['pending'] ?></h3>
             <p>Pending</p>
         </div>
-
         <div class="stat-card">
             <h3><?= (int)$stats['confirmed'] ?></h3>
             <p>Confirmed</p>
         </div>
-
         <div class="stat-card">
             <h3><?= (int)$stats['completed'] ?></h3>
             <p>Completed</p>
         </div>
-
         <div class="stat-card">
             <h3><?= (int)$stats['cancelled'] ?></h3>
             <p>Cancelled</p>
         </div>
     </section>
 
-    <!-- Create Appointment -->
     <section class="panel">
         <h2>+ Register New Appointment</h2>
 
-        <?php if (count($patients) === 0 || count($doctors) === 0): ?>
-            <p class="message error">
-                You need at least one registered patient and one registered doctor
-                before creating an appointment.
-            </p>
+        <?php if (!$patients || !$doctors): ?>
+            <div class="message error">
+                You need at least one registered patient and one registered doctor.
+            </div>
         <?php else: ?>
 
         <form method="POST">
-            <input type="hidden" name="csrf_token"
-                   value="<?= e($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token']) ?>">
 
             <div class="form-grid">
 
@@ -536,8 +623,7 @@ $stats = $pdo->query("
                         <option value="">Choose Patient</option>
                         <?php foreach ($patients as $patient): ?>
                             <option value="<?= (int)$patient['id'] ?>">
-                                <?= e($patient['full_name']) ?>
-                                (<?= e($patient['patient_number']) ?>)
+                                <?= e($patient['full_name']) ?> (<?= e($patient['patient_number']) ?>)
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -549,8 +635,7 @@ $stats = $pdo->query("
                         <option value="">Choose Doctor</option>
                         <?php foreach ($doctors as $doctor): ?>
                             <option value="<?= (int)$doctor['id'] ?>">
-                                Dr. <?= e($doctor['full_name']) ?>
-                                - <?= e($doctor['specialization']) ?>
+                                Dr. <?= e($doctor['full_name']) ?> - <?= e($doctor['specialization']) ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -558,19 +643,40 @@ $stats = $pdo->query("
 
                 <div class="form-group">
                     <label>Appointment Date *</label>
-                    <input type="date" name="appointment_date"
-                           min="<?= date('Y-m-d') ?>" required>
+                    <input
+                        type="date"
+                        name="appointment_date"
+                        min="<?= date('Y-m-d') ?>"
+                        required
+                    >
                 </div>
 
                 <div class="form-group">
                     <label>Appointment Time *</label>
-                    <input type="time" name="appointment_time" required>
+                    <select name="appointment_time" required>
+                        <option value="">Choose a time slot</option>
+                        <?php
+                        for ($hour = 8; $hour <= 16; $hour++) {
+                            foreach ([0, 30] as $minute) {
+                                if ($hour === 16 && $minute === 30) {
+                                    continue;
+                                }
+                                $time = sprintf('%02d:%02d', $hour, $minute);
+                                $display = date('h:i A', strtotime($time));
+                                echo '<option value="' . e($time) . '">' . e($display) . '</option>';
+                            }
+                        }
+                        ?>
+                    </select>
+                    <p class="slot-note">
+                        Appointment slots are available every 30 minutes, from 08:00 AM to 04:00 PM.
+                    </p>
                 </div>
 
                 <div class="form-group full-width">
                     <label>Reason for Appointment</label>
-                    <textarea name="reason"
-                              placeholder="Enter reason for appointment..."></textarea>
+                    <textarea name="reason" maxlength="1000"
+                        placeholder="Enter reason for appointment..."></textarea>
                 </div>
 
                 <div class="full-width">
@@ -585,28 +691,28 @@ $stats = $pdo->query("
         <?php endif; ?>
     </section>
 
-    <!-- Appointment List -->
     <section class="panel">
         <h2>All Appointments</h2>
 
         <form method="GET" class="filter-form">
-            <input type="text" name="search"
-                   placeholder="Search patient, ID or doctor..."
-                   value="<?= e($search) ?>">
+            <input
+                type="text"
+                name="search"
+                placeholder="Search patient, ID or doctor..."
+                value="<?= e($search) ?>"
+            >
 
             <select name="status">
                 <option value="">All Statuses</option>
                 <?php foreach (['pending','confirmed','completed','cancelled'] as $s): ?>
-                    <option value="<?= e($s) ?>"
-                        <?= $status_filter === $s ? 'selected' : '' ?>>
+                    <option value="<?= e($s) ?>" <?= $status_filter === $s ? 'selected' : '' ?>>
                         <?= ucfirst($s) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
 
             <button type="submit">Search</button>
-            <a href="appointments.php"
-               style="padding:12px;text-decoration:none;color:#087e8b;">
+            <a href="appointments.php" style="padding:12px;text-decoration:none;color:#2563eb;">
                 Reset
             </a>
         </form>
@@ -627,64 +733,47 @@ $stats = $pdo->query("
                 </thead>
 
                 <tbody>
-                <?php if (count($appointments) > 0): ?>
-
+                <?php if ($appointments): ?>
                     <?php foreach ($appointments as $appointment): ?>
                         <tr>
                             <td>#<?= (int)$appointment['id'] ?></td>
-
                             <td>
                                 <?= e($appointment['patient_name']) ?><br>
                                 <small><?= e($appointment['patient_number']) ?></small>
                             </td>
-
                             <td>
                                 Dr. <?= e($appointment['doctor_name']) ?><br>
                                 <small><?= e($appointment['specialization']) ?></small>
                             </td>
-
                             <td><?= e($appointment['appointment_date']) ?></td>
-
                             <td><?= e(date('h:i A', strtotime($appointment['appointment_time']))) ?></td>
-
                             <td><?= e($appointment['reason'] ?: 'Not specified') ?></td>
-
                             <td>
                                 <span class="status <?= e($appointment['status']) ?>">
                                     <?= e($appointment['status']) ?>
                                 </span>
                             </td>
-
                             <td>
                                 <form method="POST" class="status-form">
-                                    <input type="hidden" name="csrf_token"
-                                           value="<?= e($_SESSION['csrf_token']) ?>">
-
-                                    <input type="hidden" name="appointment_id"
-                                           value="<?= (int)$appointment['id'] ?>">
+                                    <input type="hidden" name="csrf_token" value="<?= e($_SESSION['csrf_token']) ?>">
+                                    <input type="hidden" name="appointment_id" value="<?= (int)$appointment['id'] ?>">
 
                                     <select name="status">
                                         <?php foreach (['pending','confirmed','completed','cancelled'] as $s): ?>
-                                            <option value="<?= e($s) ?>"
-                                                <?= $appointment['status'] === $s ? 'selected' : '' ?>>
+                                            <option value="<?= e($s) ?>" <?= $appointment['status'] === $s ? 'selected' : '' ?>>
                                                 <?= ucfirst($s) ?>
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
 
-                                    <button type="submit" name="update_status">
-                                        Save
-                                    </button>
+                                    <button type="submit" name="update_status">Save</button>
                                 </form>
                             </td>
                         </tr>
                     <?php endforeach; ?>
-
                 <?php else: ?>
                     <tr>
-                        <td colspan="8" class="empty">
-                            No appointments found.
-                        </td>
+                        <td colspan="8" class="empty">No appointments found.</td>
                     </tr>
                 <?php endif; ?>
                 </tbody>

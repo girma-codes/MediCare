@@ -4,12 +4,10 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../config/database.php';
 
-requireRole(['admin']);
+requireRole(['admin', 'receptionist']);
 
 $errors = [];
 $success = '';
-
-$adminName = $_SESSION['full_name'] ?? 'Administrator';
 
 // CSRF protection
 if (empty($_SESSION['csrf_token'])) {
@@ -27,33 +25,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Collect form data
     $fullName = trim($_POST['full_name'] ?? '');
-    $email = trim($_POST['email'] ?? '');
+    $email = strtolower(trim($_POST['email'] ?? ''));
     $password = $_POST['password'] ?? '';
     $gender = strtolower(trim($_POST['gender'] ?? ''));
-    $dateOfBirth = $_POST['date_of_birth'] ?? '';
+    $dateOfBirth = trim($_POST['date_of_birth'] ?? '');
     $phone = trim($_POST['phone'] ?? '');
     $address = trim($_POST['address'] ?? '');
     $emergencyContact = trim($_POST['emergency_contact'] ?? '');
 
-    // Validation
+    // Full name validation
     if ($fullName === '' || strlen($fullName) > 150) {
         $errors[] = 'Please enter a valid patient name.';
     }
 
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 150) {
+    // Email validation
+    if (
+        !filter_var($email, FILTER_VALIDATE_EMAIL) ||
+        strlen($email) > 150
+    ) {
         $errors[] = 'Please enter a valid email address.';
     }
 
+    // Password validation
     if (strlen($password) < 8) {
         $errors[] = 'Password must contain at least 8 characters.';
     }
 
+    // Gender validation
     if (!in_array($gender, ['male', 'female', 'other'], true)) {
         $errors[] = 'Please select a valid gender.';
     }
 
+    // Date of birth validation
     if ($dateOfBirth !== '') {
-        $date = DateTime::createFromFormat('Y-m-d', $dateOfBirth);
+
+        $date = DateTime::createFromFormat('!Y-m-d', $dateOfBirth);
 
         if (!$date || $date->format('Y-m-d') !== $dateOfBirth) {
             $errors[] = 'Please enter a valid date of birth.';
@@ -62,19 +68,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if (strlen($phone) > 30) {
-        $errors[] = 'Phone number is too long.';
+    // Phone number validation
+    if ($phone !== '') {
+
+        $cleanPhone = preg_replace('/[\s\-()]/', '', $phone);
+
+        if (!preg_match('/^\+?[0-9]{7,15}$/', $cleanPhone)) {
+            $errors[] = 'Please enter a valid phone number (7-15 digits).';
+        }
     }
 
+    // Address validation
     if (strlen($address) > 255) {
         $errors[] = 'Address must not exceed 255 characters.';
     }
 
-    if (strlen($emergencyContact) > 30) {
-        $errors[] = 'Emergency contact is too long.';
+    // Emergency contact validation
+    if ($emergencyContact !== '') {
+
+        $cleanEmergency = preg_replace(
+            '/[\s\-()]/',
+            '',
+            $emergencyContact
+        );
+
+        if (!preg_match('/^\+?[0-9]{7,15}$/', $cleanEmergency)) {
+            $errors[] = 'Please enter a valid emergency contact number.';
+        }
     }
 
-    // Save patient in database
+    // Save patient
     if (empty($errors)) {
 
         try {
@@ -83,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Check duplicate email
             $checkEmail = $pdo->prepare(
-                "SELECT id FROM users WHERE email = ? LIMIT 1"
+                "SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1"
             );
 
             $checkEmail->execute([$email]);
@@ -96,7 +119,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Generate unique patient number
             do {
-                $patientNumber = 'PAT-' . strtoupper(bin2hex(random_bytes(4)));
+
+                $patientNumber = 'PAT-' .
+                    strtoupper(bin2hex(random_bytes(4)));
 
                 $checkNumber = $pdo->prepare(
                     "SELECT id FROM patients WHERE patient_number = ?"
@@ -156,13 +181,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $emergencyContact !== '' ? $emergencyContact : null
             ]);
 
-            // Commit both inserts
+            // Commit transaction
             $pdo->commit();
 
             $success = "Patient registered successfully! Patient ID: "
                 . $patientNumber;
 
-            // Clear the form after success
+            // Clear form after successful registration
             $_POST = [];
 
         } catch (RuntimeException $e) {
@@ -198,7 +223,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
 
     <meta charset="UTF-8">
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <title>Register Patient | MediCare HMS</title>
@@ -299,6 +323,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         @media(max-width: 650px) {
+
             .form-grid {
                 grid-template-columns: 1fr;
             }
@@ -329,7 +354,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     </header>
 
-
     <section class="content">
 
         <div class="welcome-section">
@@ -341,18 +365,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         </div>
 
-
         <?php if ($success): ?>
 
             <div class="alert-success">
-                <?= htmlspecialchars($success) ?>
+
+                <?= htmlspecialchars($success, ENT_QUOTES, 'UTF-8') ?>
+
                 <p>
                     <a href="index.php">Go to Patient List</a>
                 </p>
+
             </div>
 
         <?php endif; ?>
-
 
         <?php if (!empty($errors)): ?>
 
@@ -360,14 +385,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 <?php foreach ($errors as $error): ?>
 
-                    <p><?= htmlspecialchars($error) ?></p>
+                    <p>
+                        <?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?>
+                    </p>
 
                 <?php endforeach; ?>
 
             </div>
 
         <?php endif; ?>
-
 
         <div class="registration-container">
 
@@ -376,7 +402,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <input
                     type="hidden"
                     name="csrf_token"
-                    value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>"
+                    value="<?= htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8') ?>"
                 >
 
                 <div class="form-grid">
@@ -392,13 +418,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             id="full_name"
                             name="full_name"
                             maxlength="150"
-                            value="<?= htmlspecialchars($_POST['full_name'] ?? '') ?>"
+                            value="<?= htmlspecialchars($_POST['full_name'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
                             placeholder="Enter patient's full name"
                             required
                         >
 
                     </div>
-
 
                     <div class="form-group">
 
@@ -411,13 +436,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             id="email"
                             name="email"
                             maxlength="150"
-                            value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
+                            value="<?= htmlspecialchars($_POST['email'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
                             placeholder="patient@example.com"
                             required
                         >
 
                     </div>
-
 
                     <div class="form-group">
 
@@ -436,7 +460,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     </div>
 
-
                     <div class="form-group">
 
                         <label for="gender">
@@ -446,17 +469,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <select id="gender" name="gender" required>
 
                             <option value="">Select gender</option>
-
-                            <option value="male">Male</option>
-
-                            <option value="female">Female</option>
-
-                            <option value="other">Other</option>
+                            <option value="male" <?= (($_POST['gender'] ?? '') === 'male') ? 'selected' : '' ?>>Male</option>
+                            <option value="female" <?= (($_POST['gender'] ?? '') === 'female') ? 'selected' : '' ?>>Female</option>
+                            <option value="other" <?= (($_POST['gender'] ?? '') === 'other') ? 'selected' : '' ?>>Other</option>
 
                         </select>
 
                     </div>
-
 
                     <div class="form-group">
 
@@ -469,11 +488,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             id="date_of_birth"
                             name="date_of_birth"
                             max="<?= date('Y-m-d') ?>"
-                            value="<?= htmlspecialchars($_POST['date_of_birth'] ?? '') ?>"
+                            value="<?= htmlspecialchars($_POST['date_of_birth'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
                         >
 
                     </div>
-
 
                     <div class="form-group">
 
@@ -486,12 +504,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             id="phone"
                             name="phone"
                             maxlength="30"
-                            value="<?= htmlspecialchars($_POST['phone'] ?? '') ?>"
+                            value="<?= htmlspecialchars($_POST['phone'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
                             placeholder="09XXXXXXXX"
                         >
 
                     </div>
-
 
                     <div class="form-group">
 
@@ -504,12 +521,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             id="emergency_contact"
                             name="emergency_contact"
                             maxlength="30"
-                            value="<?= htmlspecialchars($_POST['emergency_contact'] ?? '') ?>"
+                            value="<?= htmlspecialchars($_POST['emergency_contact'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
                             placeholder="Emergency contact number"
                         >
 
                     </div>
-
 
                     <div class="form-group full">
 
@@ -523,12 +539,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             rows="3"
                             maxlength="255"
                             placeholder="Enter patient's address"
-                        ><?= htmlspecialchars($_POST['address'] ?? '') ?></textarea>
+                        ><?= htmlspecialchars($_POST['address'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
 
                     </div>
 
                 </div>
-
 
                 <div class="form-actions">
 
